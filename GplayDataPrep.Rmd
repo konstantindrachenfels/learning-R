@@ -1,0 +1,279 @@
+---
+title: "Google Play Data Preparation"
+output: html_notebook
+author: "Konstantin Baron von Drachenfels"
+---
+
+I found a dataset on Google Play Store Apps on Kaggle. The dataset was shared by the experienced Kaggler Lavanya Gupta who gathered the data through webscraping with JQuery. The dataset was liked by 3566 commnuity members receiving gold status indicating its good quality. The dataset was updated the last time in 2019. The dataset has 10841 observations and 13 columns.   
+
+```{r}
+library(tidyverse)
+library(plotly)
+```
+
+
+```{r}
+gplay <- read_csv("googleplaystore.csv")
+
+gplay %>%
+  head(10)
+```
+
+## Data Cleaning 
+
+Looking at the columns we can already see that there are numerous changes that we will have to perform. Multiple column names include spaces which we will need to remove. Moreover, some columns are in the wrong data type. The `Last Updated` column will be transformed into a date data type and the `Size` and `Price`column will be transformed into a numerical data type. For that we need to remove the "M" at the end of every entry of the `Size` column and the $ of the beginning of every entry of the `Price` column.  
+
+```{r}
+Sys.setlocale("LC_ALL","English") #change console language to English for date change
+
+gplay$`Last Updated`<- as.Date(gplay$`Last Updated`, format =  "%B %d, %Y ")
+
+gplay$Size <- substr(gplay$Size,1,nchar(gplay$Size)-1)
+gplay$Size <- as.numeric(gplay$Size)
+
+gplay$Price <- as.numeric(gsub('\\$', '',gplay$Price))
+```
+
+The column `Current Ver` is not useful in it's current state as well. Looking closer at it we can quickly realize that it has to many different values to be used as an ordinal factor even though it does have a natural order (Apps with more updates have a higher number). In fact the column contains 2834 different unique values.
+
+```{r}
+gplay$`Current Ver` %>%
+  unique() %>%
+  length()
+```
+The column states the level of updates that have been performed in that specific application. Hence, it could be interesting to use it as indicator of age of an application.  The more updates there have been to an application, the longer it will probably already be on the market. The indicator won't be very accurate as there exist different conventions of counting versions but will work as estimate. Unfortunately, there is no standardized way to increment the number of updates. 
+
+```{r}
+gplay$`Current Ver` %>%
+  head(50)
+```
+We can quickly see that nearly every App at least uses 2 digits to increment (e.g. "1.0"). Thus, we can assume that the level of detail added at the 3rd or 4th position, for those who use that, can probably be neglected. We can assume that these will be used for minor updates. Hence, I transform the column into a numerical data type only keeping the first 3 digits to keep as many rows as possible. That way we can use this column in later analyses.
+
+```{r}
+gplay$`Current Ver` <- gplay$`Current Ver` %>%
+  substr(1,3) %>%
+  as.numeric()
+```
+
+```{r}
+summary(gplay)
+```
+
+The summary, reveals that there are 1.474 missing values in the `Rating` column, 1.696 missing values in the `Size`column and 1620 missing values in the `Current Ver` column. These can be removed without to many worries since we have sufficient remaining data available in the data set. 
+
+```{r}
+gplay <- na.omit(gplay)
+```
+
+We are now left with 7541 observations. Now, since we have the columns in the right data types and no missing values. One topic we have not examined so far are doubles in the dataset. We can assume that some entries in such a large data set can appear mutliple times. Thus, we should check for that.
+
+```{r}
+n_occur <- data.frame(table(gplay$App))
+n_occur[n_occur$Freq > 1,]
+```
+There are 487 Apps which occur at least twice in our dataset. There are Apps like "8 Ball Pool" which appear 7 times in our data set. Let's remove the duplicates.
+
+```{r}
+gplay <- gplay[!duplicated(gplay$App), ]
+```
+
+Now,let's take a closer look at the different columns. Going back to the `Current Ver` column we can see that there could be some outliers now. A version number of 858 seems very high. Lets look at the entries with the highest version number.
+
+```{r}
+gplay %>%
+  arrange(desc(`Current Ver`)) %>%
+  head(20)
+```
+
+The Apps seem to be proper regarding their information in the other columns. In fact some Apps have already performed an enormous amount of updates as for example Facebook who is already at version number 310.0.0.50.118 today. Still, looking at these Apps we can assume that their version number does not have anything to do with their age. We would have to be careful and to apply a filter when we want to examine this relationship during our analyses. However, I would not exclude them since the rest of the data looks fine.
+
+Another thing to observe was that the columns regarding the number of downloads (`Installs`) and the android versions which are supported(`Android Ver`) are better used as ordered factors since they have a natural order. Their number of categories is also reduced since a column with more than 30 categories does not add too much value. Regarding the `Installs`, I cluster multiple categories into one as for example the "1+", "5+", "10+" and "50+" into "<100". I follow the same principle for the `Android Ver` column. 
+
+```{r}
+gplay <- gplay %>%
+  mutate(Installs = Installs %>% recode_factor("1+" = "1+",
+                                               "5+" = "5+",
+                                               "10+" = "10+",
+                                               "50+" = "50+",
+                                               "100+" = "100+",
+                                               "500+" = "500+",
+                                               "1,000+" = "1k+",
+                                               "5,000+" = "5k+",
+                                               "10,000+" = "10k+",
+                                               "50,000+" = "50k+",
+                                               "100,000+" = "100k+",
+                                               "500,000+" = "500k+",
+                                               "1,000,000+" = "1M+",
+                                               "5,000,000+" = "5M+",
+                                               "10,000,000+" = "10M+",
+                                               "50,000,000+" = "50M+",
+                                               "100,000,000+" = "100M+",
+                                               "500,000,000+" = "500M+",
+                                               "1,000,000,000+" = "1B+",
+                                               .ordered=TRUE)
+         )
+
+
+gplay$Installs %>%
+  levels()
+```
+```{r}
+gplay <- gplay %>%
+  mutate(`Android Ver` = `Android Ver` %>% recode_factor("1.0 and up" = "1.0+",
+                                                     "1.5 and up" = "1.0+",
+                                                     "1.6 and up" = "1.0+",
+                                                     "2.0 and up" = "2.0+",
+                                                     "2.0.1 and up" = "2.0+",
+                                                     "2.1 and up" = "2.0+",
+                                                     "2.2 and up" = "2.0+",
+                                                     "2.3 and up" = "2.0+",
+                                                     "2.3.3 and up" = "2.0+",
+                                                     "3.0 and up" = "3.0+",
+                                                     "3.1 and up" = "3.0+",
+                                                     "3.2 and up" = "3.0+",
+                                                     "4.0 and up" = "4.0+",
+                                                     "4.0.3 and up" = "4.0+",
+                                                     "4.1 and up" = "4.0+",
+                                                     "4.2 and up" = "4.0+",
+                                                     "4.3 and up" = "4.0+",
+                                                     "4.4 and up" = "4.0+",
+                                                     "4.4W and up" = "4.0+",
+                                                     "5.0 and up" = "5.0+",
+                                                     "5.1 and up" = "5.0+",
+                                                     "6.0 and up" = "6.0+",
+                                                     "7.0 and up" = "7.0+",
+                                                     "7.1 and up" = "7.0+",
+                                                     "8.0 and up" = "8.0+",
+                                               .ordered=TRUE)
+         )
+
+
+gplay$`Android Ver` %>%
+  levels()
+```
+
+We can see that regarding the `Android Ver` we still have some specific columns which describe special cases as for example "5.0 - 6.0" which probably describes a discontinued App since it does not support the latest Android versions anymore. We want to exclude these few special cases.
+
+```{r}
+gplay <- gplay %>%
+  filter(!`Android Ver` %in% c("4.0.3 - 7.1.1", "Varies with device", "7.0 - 7.1.1", "5.0 - 8.0", "4.1 - 7.1.1", "NaN", "5.0 - 6.0"))
+  
+```
+
+At last, the `Type` column also qualifies for a data type change since it only consists out of 2 different values. 
+
+```{r}
+gplay$Type %>%
+  unique()
+```
+Most Apps are Free. Let's transform this column into a boolean variable that checks if an App is free or not. 
+
+```{r}
+gplay$Type <- gplay$Type == "Free"
+```
+
+We now have a clean data set with 6.836 observations and 13 columns including character, ordinal, logical, numerical and date columns. This provides us with a good basis to perform our analyses.
+
+At last, we now still need to change the names of our columns since we have some column names with spaces or not quite perfectly descriptive names. 
+
+
+```{r}
+gplay <- gplay %>%
+  rename(
+    Name = App,
+    Cat = Category,
+    nb_Reviews = Reviews,
+    Size_Mbyte = Size,
+    nb_Dloads = Installs,
+    Is_Free = Type,
+    Content_Rat = `Content Rating`,
+    last_Update = `Last Updated`,
+    Current_Ver = `Current Ver`,
+    Ver_Support = `Android Ver`
+  
+  )
+```
+
+The cleaning is done. Let's save the data set. 
+
+```{r}
+save(gplay,file = "gplay.RData")
+
+```
+
+## Data description
+
+Let us now take a closer look at the cleaned data set. 
+
+```{r}
+gplay %>%
+  summary()
+
+```
+
+We can observe that most Apps have been updated at least once (Median = 2, Mean probably not so representative because of the outliers)  and at least once within the last 4 years (Median = 25 April 2018 and Mean = 09 October 2017).
+
+We can also straight away see that most of the Apps in the data set are for free. Only 525 out of the 6.836 Apps are payable in the App store and the median price is 0. This is unsurprising as most Apps we use in our daily life as social networks, transportation Apps or news Apps are for free. However, there exist many "Freemium" Apps which are free to be downloaded but payable to access the service or premium services. These are not recognized in this data set. 
+
+```{r}
+gplay %>%
+  ggplot(aes(y = Price)) + geom_area(stat="bin")
+```
+
+Looking at the distribution of the prices we can see that most Apps have a very small price. This confirms the idea that people are probably just not willing to spend a lot of money for the download of an Application. There simply exist other pricing models, other channels of revenue. There seem to be some outliers with a price close to 400$.
+
+```{r}
+gplay %>%
+  filter(Price>350)
+```
+Looking up these kind of applications, one can find out that they do not include any functions and are just designed to give people a status symbol with which they can show that they are rich (https://en.wikipedia.org/wiki/I_Am_Rich). This describes a very special case which we do not want in our statistics. Lets remove these applications.
+
+```{r}
+gplay <- gplay %>%
+  filter(Price<350)
+```
+
+```{r}
+gplay$Genres %>%
+  unique() %>%
+  length()
+```
+
+```{r}
+gplay$Cat %>%
+  unique() %>%
+  length()
+```
+
+```{r}
+gplay$Cat %>%
+  unique()
+```
+
+The `Cat` and `Genres` columns categorize the Apps into different classes whereby the `Genres` column is much more detailed with 111 different categories. 
+
+```{r}
+gplay %>%
+  group_by(Cat) %>%
+  summarise(nb_Apps = n()) %>%
+  arrange(desc(nb_Apps)) %>%
+  head(7) %>%
+  ggplot(aes(x = Cat, y = nb_Apps)) + geom_bar(stat="identity")
+```
+By the far the most Apps can be observed in the "Family" category. The categories "Game" and "Tools" are on the 2nd and 3rd place respectively. Afterwards the curve flattens out. 
+
+
+```{r}
+gplay %>%
+  group_by(Cat) %>%
+  summarise(avg_Reviews = mean(nb_Reviews),
+            avg_Rating = (mean(Rating))) %>%
+  arrange(desc(avg_Rating)) %>%
+  ggplot(aes(y=reorder(Cat, avg_Rating), x= avg_Rating, fill= avg_Reviews)) + geom_col()
+```
+
+We can see that the Apps do not differ enormously in their ratings. The best ratings are on average given to Apps of the categories Events, Education or Arts & Design. The lowest ratings are given to Apps of the categories Dating, Travel & Local and Maps & Navigation. It will be interesting to go deeper into the analysis behind these placements. One could for example create the hypothesis that users of Dating, Travel or Navigation-Applications are more demanding than users of the high-rated Apps. Also, education and Art & Design present niche markets which only attract a very specif type of users while the low rated Apps are everyday usage Apps for a very large number of users. Th most number of reviews have been giving by far to gaming Apps. These seem to be particularly controversial. Maybe users have a particular interest here to signal the quality of the App through their reviews. 
+
+The goal of the analysis with Shiny Apps will be to see which of these macro factors have an influence on the success of an Application. The success will be examined through the 3 different indicators: number of downloads, number of reviews and rating. It will be interesting to see the importance of the type of application (`Cat` and `Genres`) and the age of the application (estimated through the number of versions). We will also examine the relation with update date and the price. At last, I will also create an area in which people can browse through the most successful Apps overall, per category and per genre. 
+
+
